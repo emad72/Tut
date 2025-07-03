@@ -1,102 +1,80 @@
 
 import streamlit as st
-import numpy as np
 from PIL import Image
-import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import mean_squared_error
 from sklearn.cluster import KMeans
-import colorsys
-from io import BytesIO
+import pandas as pd
+import matplotlib.pyplot as plt
 
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="Tut Color Analyzer", layout="wide")
 st.title("🎨 Tut Color Analyzer")
+st.markdown("Upload an image and get the closest artistic color mixes (Y, R, B, W)")
 
 uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+n_colors = st.slider("عدد درجات الألوان المراد استخراجها:", min_value=6, max_value=48, value=18)
 
-def perceptual_mix(rgb):
-    r, g, b = rgb
-    r, g, b = r / 255.0, g / 255.0, b / 255.0
-    h, s, v = colorsys.rgb_to_hsv(r, g, b)
-    h_deg = h * 360
-
-    white = round((v ** 2) * 100, 1) if v > 0.7 and s < 0.3 else 0
-    remaining = 100 - white if white < 100 else 0.0001
-
-    ratios = {"Y": 0, "R": 0, "B": 0}
-    if s < 0.1:
-        pass
-    elif h_deg >= 0 and h_deg < 60:
-        ratios["R"] = 1 - h_deg / 60
-        ratios["Y"] = h_deg / 60
-    elif h_deg >= 60 and h_deg < 180:
-        ratios["Y"] = max(0, 1 - abs(h_deg - 90) / 90)
-        ratios["B"] = max(0, (h_deg - 120) / 60) if h_deg >= 120 else 0
-    elif h_deg >= 180 and h_deg < 300:
-        ratios["B"] = 1 - abs(h_deg - 240) / 60
-        ratios["R"] = max(0, (h_deg - 240) / 60)
-    elif h_deg >= 300 and h_deg <= 360:
-        ratios["R"] = 1 - abs(h_deg - 360) / 60
-        ratios["B"] = (h_deg - 300) / 60
-
-    total = sum(ratios.values())
-    if total == 0:
-        return {"Y": 0, "R": 0, "B": 0, "W": 100}
-    for k in ratios:
-        ratios[k] = round(ratios[k] / total * remaining, 1)
-
-    ratios["W"] = round(white, 1)
-    return ratios
-
-def rgb_to_hex(rgb):
-    return "#{:02x}{:02x}{:02x}".format(*rgb)
+reference_colors = {
+    "Cadmium Yellow Light": ((255, 255, 153), {"Y": 80, "R": 0, "B": 0, "W": 20}),
+    "Cadmium Red": ((227, 38, 54), {"Y": 0, "R": 90, "B": 0, "W": 10}),
+    "Ultramarine Blue": ((18, 10, 143), {"Y": 0, "R": 0, "B": 95, "W": 5}),
+    "Titanium White": ((255, 255, 255), {"Y": 0, "R": 0, "B": 0, "W": 100}),
+    "Burnt Sienna": ((138, 54, 15), {"Y": 10, "R": 60, "B": 10, "W": 20}),
+    "Turquoise": ((64, 224, 208), {"Y": 10, "R": 0, "B": 60, "W": 30}),
+    "Violet": ((127, 0, 255), {"Y": 0, "R": 30, "B": 60, "W": 10}),
+    "Orange": ((255, 165, 0), {"Y": 50, "R": 40, "B": 0, "W": 10}),
+    "Pink": ((255, 182, 193), {"Y": 0, "R": 30, "B": 0, "W": 70}),
+    "Olive Green": ((128, 128, 0), {"Y": 40, "R": 10, "B": 10, "W": 40}),
+    "Payne's Grey": ((83, 104, 120), {"Y": 0, "R": 0, "B": 60, "W": 40}),
+    "Raw Umber": ((115, 74, 18), {"Y": 20, "R": 50, "B": 10, "W": 20})
+}
 
 if uploaded_file:
-    image = Image.open(uploaded_file).convert("RGB")
-    st.image(image, caption="Uploaded Image", use_container_width=True)
+    st.image(uploaded_file, caption="Uploaded Image", use_container_width=True)
 
-    num_colors = st.slider("Number of tones to extract", min_value=2, max_value=30, value=12)
-    img_np = np.array(image)
-    h, w = img_np.shape[:2]
-    crop = img_np[int(h*0.1):int(h*0.9), int(w*0.1):int(w*0.9)]
-    small = np.array(Image.fromarray(crop).resize((200, 200)))
-    pixels = small.reshape((-1, 3))
-    kmeans = KMeans(n_clusters=num_colors, random_state=42).fit(pixels)
-    colors = np.round(kmeans.cluster_centers_).astype(int)
+    img = Image.open(uploaded_file).convert("RGB")
+    img_small = img.resize((200, 200))
+    pixels = np.array(img_small).reshape(-1, 3)
 
-    brightness = [np.mean(c) for c in colors]
-    order = np.argsort(brightness)[::-1]
-    colors = [colors[i] for i in order]
+    kmeans = KMeans(n_clusters=n_colors, random_state=42).fit(pixels)
+    dominant_colors = kmeans.cluster_centers_.astype(int)
 
-    hexes = [rgb_to_hex(c) for c in colors]
-    mixes = [perceptual_mix(c) for c in colors]
+    results = []
+    for i, color in enumerate(dominant_colors):
+        best_match = None
+        best_score = float("inf")
+        for name, (ref_rgb, mix) in reference_colors.items():
+            score = mean_squared_error(color, ref_rgb)
+            if score < best_score:
+                best_score = score
+                best_match = (name, ref_rgb, mix)
+        results.append((f"C{i+1}", color, *best_match))
 
-    fig, ax = plt.subplots(figsize=(9, len(colors) * 0.6))
+    rows = []
+    for code, rgb, name, ref_rgb, mix in results:
+        mix_str = " ".join([f"{k}:{v}%" for k, v in mix.items()])
+        hex_color = "#{:02x}{:02x}{:02x}".format(*rgb)
+        rows.append([code, name, hex_color, mix_str])
+
+    df = pd.DataFrame(rows, columns=["Code", "Closest Color", "Hex", "Mix Ratio"])
+    st.dataframe(df, use_container_width=True)
+
+    fig, ax = plt.subplots(figsize=(10, len(df) * 0.5))
     ax.axis("off")
-    table_data = [
-        [f"TC{i+1}", hexes[i],
-         f"Y:{mixes[i]['Y']}%  R:{mixes[i]['R']}%  B:{mixes[i]['B']}%  W:{mixes[i]['W']}%"]
-        for i in range(len(colors))
-    ]
     table = ax.table(
-        cellText=table_data,
-        colLabels=["Code", "Color", "Mix (Y/R/B/W)"],
+        cellText=df.values,
+        colLabels=df.columns,
         loc="center",
         cellLoc="left",
         colLoc="center",
-        colWidths=[0.15, 0.2, 0.65]
+        colColours=["#f5f5f5"] * 4
     )
-    for i, c in enumerate(colors):
-        table[(i+1, 1)].set_facecolor(rgb_to_hex(c))
+    for i, row in df.iterrows():
+        table[(i + 1, 2)].set_facecolor(row["Hex"])
     table.auto_set_font_size(False)
-    table.set_fontsize(11)
-    table.scale(1, 1.4)
-
-    buf = BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight")
-    st.pyplot(fig)
-
-    st.download_button(
-        label="📥 Download Final Mix Guide",
-        data=buf.getvalue(),
-        file_name="Tut_Mix_Guide_Final.png",
-        mime="image/png"
-    )
+    table.set_fontsize(10)
+    table.scale(1, 1.5)
+    output_path = "tut_mix_table.png"
+    plt.savefig(output_path, bbox_inches="tight", format="png")
+    with open(output_path, "rb") as f:
+        st.download_button("Download Table as Image", f, "tut_mix_table.png")
