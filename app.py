@@ -71,6 +71,7 @@ if uploaded_file:
     )
     for i, row in df.iterrows():
         table[(i + 1, 2)].set_facecolor(row["Hex"])
+        table[(i + 1, 2)].get_text().set_text("")
     table.auto_set_font_size(False)
     table.set_fontsize(10)
     table.scale(1, 1.5)
