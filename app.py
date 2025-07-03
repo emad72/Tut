@@ -1,77 +1,86 @@
+
 import streamlit as st
 from PIL import Image
 import numpy as np
+import cv2
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
+import io
+import base64
 
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="Tut Color Extractor", layout="wide")
 
-st.title("🎨 Tut Color Mixer Analyzer")
-
-uploaded_file = st.file_uploader("Upload Image of Pastels", type=["png", "jpg", "jpeg"])
+st.title("Tut Color Mixing Guide 🎨")
+uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+num_colors = st.slider("How many tones to extract?", 3, 30, 7)
 
 def rgb_to_hex(rgb):
     return "#{:02x}{:02x}{:02x}".format(*rgb)
 
 def estimate_mix(rgb):
     r, g, b = rgb
-    w = (255 - max(rgb)) / 255
-    total = r + g + b
-    if total == 0:
+    norm = np.array(rgb) / 255.0
+    lightness = np.mean(norm)
+    chroma = max(norm) - min(norm)
+    grayness = 1 - chroma
+    w = round(lightness * grayness * 100, 1)
+
+    if r + g + b == 0:
         return {"Y": 0, "R": 0, "B": 0, "W": 100}
-    y = r / total
-    r_ = g / total
-    b_ = b / total
-    base = y + r_ + b_ + w
+
+    total = r + g + b
+    Y = r / total
+    R = g / total
+    B = b / total
+    base = Y + R + B
     return {
-        "Y": round(y / base * 100, 1),
-        "R": round(r_ / base * 100, 1),
-        "B": round(b_ / base * 100, 1),
-        "W": round(w / base * 100, 1)
+        "Y": round(Y / base * (100 - w), 1),
+        "R": round(R / base * (100 - w), 1),
+        "B": round(B / base * (100 - w), 1),
+        "W": w
     }
 
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     img_np = np.array(image)
     h, w = img_np.shape[:2]
-    crop = img_np[int(h * 0.1):int(h * 0.9), int(w * 0.1):int(w * 0.9)]
-    small = np.array(Image.fromarray(crop).resize((200, 200)))
+    crop = img_np[int(h*0.1):int(h*0.9), int(w*0.1):int(w*0.9)]
+    small = cv2.resize(crop, (200, 200))
     pixels = small.reshape((-1, 3))
 
-    n_colors = 18
-    km = KMeans(n_clusters=n_colors, random_state=42).fit(pixels)
-    centers = np.round(km.cluster_centers_).astype(int)
-    brightness = [np.mean(c) for c in centers]
-    order = np.argsort(brightness)[::-1]
-    sorted_colors = [centers[i] for i in order]
-    hexes = [rgb_to_hex(c) for c in sorted_colors]
-    mixes = [estimate_mix(c) for c in sorted_colors]
+    km = KMeans(n_clusters=num_colors, random_state=42).fit(pixels)
+    colors = np.round(km.cluster_centers_).astype(int)
 
-    fig, ax = plt.subplots(figsize=(9, len(sorted_colors) * 0.6))
+    hexes = [rgb_to_hex(c) for c in colors]
+    br = [np.mean(c) for c in colors]
+    order = np.argsort(br)[::-1]
+    colors = [colors[i] for i in order]
+    hexes = [hexes[i] for i in order]
+    mix = [estimate_mix(c) for c in colors]
+
+    fig, ax = plt.subplots(figsize=(9, 1.5 + 0.8 * len(colors)))
     ax.axis("off")
-
-    table_data = []
-    for i, mix in enumerate(mixes):
-        row = [
-            f"BG{i+1}",
-            f"Tone {i+1}",
-            f"B:{mix['B']}% R:{mix['R']}% Y:{mix['Y']}% W:{mix['W']}%"
-        ]
-        table_data.append(row)
-
     table = ax.table(
-        cellText=table_data,
-        colLabels=["Code", "Name", "Mix Ratio (Y/R/B/W)"],
-        colLoc="left", cellLoc="left",
-        loc="center", colWidths=[0.15, 0.2, 0.65]
+        cellText=[[f"Tone {i+1}", hexes[i],
+                   f"B:{mix[i]['B']}% R:{mix[i]['R']}% Y:{mix[i]['Y']}% W:{mix[i]['W']}%"]
+                  for i in range(len(colors))],
+        colLabels=["Name", "Hex", "Mix Ratio (Y/R/B/W)"],
+        loc="center", cellLoc="left", colLoc="center",
+        colWidths=[0.15, 0.2, 0.65]
     )
-
-    for i, color in enumerate(sorted_colors):
-        table[(i + 1, 0)].set_facecolor(rgb_to_hex(color))
-
+    for i, c in enumerate(colors):
+        table[(i+1, 1)].set_facecolor(rgb_to_hex(c))
     table.auto_set_font_size(False)
-    table.set_fontsize(12)
+    table.set_fontsize(11)
     table.scale(1, 1.5)
 
-    st.pyplot(fig)
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close()
+    buf.seek(0)
+    st.image(buf, caption="Color Mixing Guide", use_column_width=True)
+
+    # زر التحميل
+    b64 = base64.b64encode(buf.read()).decode()
+    href = f'<a href="data:image/png;base64,{b64}" download="mix_guide.png">📥 Download Image</a>'
+    st.markdown(href, unsafe_allow_html=True)
