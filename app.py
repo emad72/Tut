@@ -5,6 +5,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 import colorsys
+from io import BytesIO
 
 st.set_page_config(layout="wide")
 st.title("🎨 Tut Color Analyzer")
@@ -14,7 +15,6 @@ uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 def perceptual_mix(rgb):
     r, g, b = rgb
     r, g, b = r / 255.0, g / 255.0, b / 255.0
-
     h, s, v = colorsys.rgb_to_hsv(r, g, b)
     h_deg = h * 360
 
@@ -51,7 +51,7 @@ def rgb_to_hex(rgb):
 
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
-    st.image(image, caption="Uploaded Image", use_column_width=True)
+    st.image(image, caption="Uploaded Image", use_container_width=True)
 
     num_colors = st.slider("Number of tones to extract", min_value=2, max_value=30, value=12)
     img_np = np.array(image)
@@ -90,14 +90,13 @@ if uploaded_file:
     table.set_fontsize(11)
     table.scale(1, 1.4)
 
-    output_path = "/mnt/data/Tut_Mix_Guide_Final.png"
-    plt.savefig(output_path, bbox_inches="tight", format="png")
+    buf = BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
     st.pyplot(fig)
 
-    with open(output_path, "rb") as file:
-        btn = st.download_button(
-            label="📥 Download Final Mix Guide",
-            data=file,
-            file_name="Tut_Mix_Guide_Final.png",
-            mime="image/png"
-        )
+    st.download_button(
+        label="📥 Download Final Mix Guide",
+        data=buf.getvalue(),
+        file_name="Tut_Mix_Guide_Final.png",
+        mime="image/png"
+    )
