@@ -1,89 +1,103 @@
 
 import streamlit as st
-from PIL import Image
 import numpy as np
-import cv2
-from sklearn.cluster import KMeans
+from PIL import Image
 import matplotlib.pyplot as plt
-import io
-import base64
+from sklearn.cluster import KMeans
+import colorsys
 
-st.set_page_config(page_title="Tut Color Extractor", layout="wide")
-
-st.title("🎨 Tut Color Mixing Guide")
+st.set_page_config(layout="wide")
+st.title("🎨 Tut Color Analyzer")
 
 uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-num_colors = st.slider("Number of color tones to extract", min_value=3, max_value=30, value=7)
+
+def perceptual_mix(rgb):
+    r, g, b = rgb
+    r, g, b = r / 255.0, g / 255.0, b / 255.0
+
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    h_deg = h * 360
+
+    white = round((v ** 2) * 100, 1) if v > 0.7 and s < 0.3 else 0
+    remaining = 100 - white if white < 100 else 0.0001
+
+    ratios = {"Y": 0, "R": 0, "B": 0}
+    if s < 0.1:
+        pass
+    elif h_deg >= 0 and h_deg < 60:
+        ratios["R"] = 1 - h_deg / 60
+        ratios["Y"] = h_deg / 60
+    elif h_deg >= 60 and h_deg < 180:
+        ratios["Y"] = max(0, 1 - abs(h_deg - 90) / 90)
+        ratios["B"] = max(0, (h_deg - 120) / 60) if h_deg >= 120 else 0
+    elif h_deg >= 180 and h_deg < 300:
+        ratios["B"] = 1 - abs(h_deg - 240) / 60
+        ratios["R"] = max(0, (h_deg - 240) / 60)
+    elif h_deg >= 300 and h_deg <= 360:
+        ratios["R"] = 1 - abs(h_deg - 360) / 60
+        ratios["B"] = (h_deg - 300) / 60
+
+    total = sum(ratios.values())
+    if total == 0:
+        return {"Y": 0, "R": 0, "B": 0, "W": 100}
+    for k in ratios:
+        ratios[k] = round(ratios[k] / total * remaining, 1)
+
+    ratios["W"] = round(white, 1)
+    return ratios
 
 def rgb_to_hex(rgb):
     return "#{:02x}{:02x}{:02x}".format(*rgb)
 
-def estimate_mix(rgb):
-    r, g, b = rgb
-    max_val = max(rgb)
-    min_val = min(rgb)
-    lightness = (max_val + min_val) / 2 / 255.0
-
-    # تعديل نسبة الأبيض: الأبيض يزيد كلما اللون أفتح
-    w = round(lightness * 100, 1)
-
-    total = r + g + b
-    if total == 0:
-        return {"Y": 0, "R": 0, "B": 0, "W": 100}
-
-    Y = r / total
-    R = g / total
-    B = b / total
-    base = Y + R + B
-
-    return {
-        "Y": round(Y / base * (100 - w), 1),
-        "R": round(R / base * (100 - w), 1),
-        "B": round(B / base * (100 - w), 1),
-        "W": w
-    }
-
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Uploaded Image", use_column_width=True)
+
+    num_colors = st.slider("Number of tones to extract", min_value=2, max_value=30, value=12)
     img_np = np.array(image)
     h, w = img_np.shape[:2]
     crop = img_np[int(h*0.1):int(h*0.9), int(w*0.1):int(w*0.9)]
-    small = cv2.resize(crop, (200, 200))
+    small = np.array(Image.fromarray(crop).resize((200, 200)))
     pixels = small.reshape((-1, 3))
+    kmeans = KMeans(n_clusters=num_colors, random_state=42).fit(pixels)
+    colors = np.round(kmeans.cluster_centers_).astype(int)
 
-    km = KMeans(n_clusters=num_colors, random_state=42).fit(pixels)
-    colors = np.round(km.cluster_centers_).astype(int)
+    brightness = [np.mean(c) for c in colors]
+    order = np.argsort(brightness)[::-1]
+    colors = [colors[i] for i in order]
 
     hexes = [rgb_to_hex(c) for c in colors]
-    br = [np.mean(c) for c in colors]
-    order = np.argsort(br)[::-1]
-    colors = [colors[i] for i in order]
-    hexes = [hexes[i] for i in order]
-    mix = [estimate_mix(c) for c in colors]
+    mixes = [perceptual_mix(c) for c in colors]
 
-    fig, ax = plt.subplots(figsize=(9, 1.5 + 0.8 * len(colors)))
+    fig, ax = plt.subplots(figsize=(9, len(colors) * 0.6))
     ax.axis("off")
+    table_data = [
+        [f"TC{i+1}", hexes[i],
+         f"Y:{mixes[i]['Y']}%  R:{mixes[i]['R']}%  B:{mixes[i]['B']}%  W:{mixes[i]['W']}%"]
+        for i in range(len(colors))
+    ]
     table = ax.table(
-        cellText=[[f"Tone {i+1}", hexes[i],
-                   f"B:{mix[i]['B']}% R:{mix[i]['R']}% Y:{mix[i]['Y']}% W:{mix[i]['W']}%"]
-                  for i in range(len(colors))],
-        colLabels=["Name", "Hex", "Mix Ratio (Y/R/B/W)"],
-        loc="center", cellLoc="left", colLoc="center",
+        cellText=table_data,
+        colLabels=["Code", "Color", "Mix (Y/R/B/W)"],
+        loc="center",
+        cellLoc="left",
+        colLoc="center",
         colWidths=[0.15, 0.2, 0.65]
     )
     for i, c in enumerate(colors):
         table[(i+1, 1)].set_facecolor(rgb_to_hex(c))
     table.auto_set_font_size(False)
     table.set_fontsize(11)
-    table.scale(1, 1.5)
+    table.scale(1, 1.4)
 
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight")
-    plt.close()
-    buf.seek(0)
-    st.image(buf, caption="Color Mixing Guide", use_column_width=True)
+    output_path = "/mnt/data/Tut_Mix_Guide_Final.png"
+    plt.savefig(output_path, bbox_inches="tight", format="png")
+    st.pyplot(fig)
 
-    # زر التحميل
-    b64 = base64.b64encode(buf.read()).decode()
-    href = f'<a href="data:image/png;base64,{b64}" download="mix_guide.png">📥 Download Image</a>'
-    st.markdown(href, unsafe_allow_html=True)
+    with open(output_path, "rb") as file:
+        btn = st.download_button(
+            label="📥 Download Final Mix Guide",
+            data=file,
+            file_name="Tut_Mix_Guide_Final.png",
+            mime="image/png"
+        )
