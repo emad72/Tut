@@ -10,29 +10,32 @@ import base64
 
 st.set_page_config(page_title="Tut Color Extractor", layout="wide")
 
-st.title("Tut Color Mixing Guide 🎨")
+st.title("🎨 Tut Color Mixing Guide")
+
 uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-num_colors = st.slider("How many tones to extract?", 3, 30, 7)
+num_colors = st.slider("Number of color tones to extract", min_value=3, max_value=30, value=7)
 
 def rgb_to_hex(rgb):
     return "#{:02x}{:02x}{:02x}".format(*rgb)
 
 def estimate_mix(rgb):
     r, g, b = rgb
-    norm = np.array(rgb) / 255.0
-    lightness = np.mean(norm)
-    chroma = max(norm) - min(norm)
-    grayness = 1 - chroma
-    w = round(lightness * grayness * 100, 1)
+    max_val = max(rgb)
+    min_val = min(rgb)
+    lightness = (max_val + min_val) / 2 / 255.0
 
-    if r + g + b == 0:
-        return {"Y": 0, "R": 0, "B": 0, "W": 100}
+    # تعديل نسبة الأبيض: الأبيض يزيد كلما اللون أفتح
+    w = round(lightness * 100, 1)
 
     total = r + g + b
+    if total == 0:
+        return {"Y": 0, "R": 0, "B": 0, "W": 100}
+
     Y = r / total
     R = g / total
     B = b / total
     base = Y + R + B
+
     return {
         "Y": round(Y / base * (100 - w), 1),
         "R": round(R / base * (100 - w), 1),
