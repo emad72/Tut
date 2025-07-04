@@ -1,65 +1,89 @@
-import streamlit as st import matplotlib.pyplot as plt import matplotlib.patches as patches import numpy as np from sklearn.cluster import KMeans from PIL import Image import os from colormath.color_objects import sRGBColor, LabColor from colormath.color_conversions import convert_color from colormath.color_diff import delta_e_cie2000
 
-Color reference palette with assumed RGB values
+import streamlit as st
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import numpy as np
+from sklearn.cluster import KMeans
+from PIL import Image
+import os
+from colormath.color_objects import sRGBColor, LabColor
+from colormath.color_conversions import convert_color
+from colormath.color_diff import delta_e_cie2000
 
-REFERENCE_COLORS = { "Yellow": (255, 255, 0), "Red": (255, 0, 0), "Blue": (0, 0, 255), "White": (255, 255, 255) }
+# ---------------- Color Mixing ---------------- #
+def get_mix_percentages(target_rgb, reference_rgbs):
+    target_color = sRGBColor(*[v / 255 for v in target_rgb])
+    target_lab = convert_color(target_color, LabColor)
 
-Load and resize image
+    similarities = []
+    for ref_rgb in reference_rgbs:
+        ref_color = sRGBColor(*[v / 255 for v in ref_rgb])
+        lab = convert_color(ref_color, LabColor)
+        delta_e = delta_e_cie2000(target_lab, lab)
+        similarities.append(delta_e)
 
-def load_image(image_file): img = Image.open(image_file) img = img.convert('RGB') img = img.resize((300, 300)) return np.array(img)
+    similarities = np.array(similarities)
+    weights = np.maximum(1e-10, 1 / (similarities + 1e-6))  # Avoid divide by zero
+    weights /= weights.sum()
 
-Convert RGB to LAB for better perceptual difference comparison
+    percentages = (weights * 100).round(1)
+    return percentages
 
-def rgb_to_lab(color): rgb = sRGBColor(color[0]/255, color[1]/255, color[2]/255) return convert_color(rgb, LabColor)
+# ---------------- Streamlit UI ---------------- #
+st.set_page_config(page_title="Tut Analyzer", layout="centered")
 
-Get mix percentages based on closest CIEDE2000 distance
+st.title("🎨 Tut Color Analyzer")
+st.markdown("Upload an image with your pastel tones. The app will extract the dominant colors and calculate the mix (Y/R/B/W).")
 
-def get_mix_percentages(target_rgb, reference_rgbs): target_lab = rgb_to_lab(target_rgb) distances = [] for ref_name, ref_rgb in reference_rgbs.items(): lab = rgb_to_lab(ref_rgb) delta_e = delta_e_cie2000(target_lab, lab) distances.append((ref_name, float(delta_e)))
+uploaded_image = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
-distances.sort(key=lambda x: x[1])
-top_matches = distances[:2 if distances[0][1] < 10 else 3]
+if uploaded_image:
+    img = Image.open(uploaded_image).convert("RGB")
+    st.image(img, caption="Uploaded Image", use_container_width=True)
 
-inv_distances = [1 / (d + 1e-6) for _, d in top_matches]
-total = sum(inv_distances)
-percentages = [round((v / total) * 100) for v in inv_distances]
-correction = 100 - sum(percentages)
-percentages[0] += correction
+    num_colors = st.slider("Number of tones to extract", 2, 48, 6)
 
-result = dict(zip([x[0] for x in top_matches], percentages))
-return result
+    img_data = np.array(img)
+    img_data = img_data.reshape(-1, 3)
 
-Display result table
+    kmeans = KMeans(n_clusters=num_colors, n_init=10)
+    kmeans.fit(img_data)
+    colors = kmeans.cluster_centers_.astype(int)
 
-def display_results(colors, mix_results): fig, ax = plt.subplots(figsize=(10, len(colors) * 0.6)) ax.axis('off')
+    # Reference primary components
+    reference_colors = {
+        "Yellow": (255, 255, 0),
+        "Red": (255, 0, 0),
+        "Blue": (0, 0, 255),
+        "White": (255, 255, 255),
+    }
+    reference_names = list(reference_colors.keys())
+    reference_rgbs = list(reference_colors.values())
 
-for i, (color, mix) in enumerate(zip(colors, mix_results)):
-    y = len(colors) - i - 1
-    ax.add_patch(patches.Rectangle((0, y), 1, 1, color=np.array(color)/255))
-    label = f"  {i+1:02d}  "
-    mix_str = '  |  '.join([f"{k}: {v}%" for k, v in mix.items()])
-    ax.text(1.1, y + 0.5, label + mix_str, va='center', fontsize=10, family='monospace')
+    mix_results = [get_mix_percentages(color, reference_rgbs) for color in colors]
 
-output_path = "color_mix_result.png"
-plt.savefig(output_path, bbox_inches="tight", format="png")
-return output_path
+    # Display result as table image
+    fig, ax = plt.subplots(figsize=(8, len(colors) * 0.6))
+    ax.axis("off")
 
-Streamlit UI
+    cell_height = 1
+    for i, (color, mix) in enumerate(zip(colors, mix_results)):
+        y = -i * cell_height
 
-st.set_page_config(page_title="Tut Analyzer", layout="centered") st.title("🎨 Tut Color Analyzer")
+        # Color box
+        rect = patches.Rectangle((0, y), 1, cell_height, color=np.array(color) / 255)
+        ax.add_patch(rect)
 
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"]) num_colors = st.slider("Number of tones to extract", 2, 48, 10)
+        # Text
+        text = f"{int(color[0])}, {int(color[1])}, {int(color[2])} → "
+        text += " | ".join(f"{name}: {pct:.1f}%" for name, pct in zip(reference_names, mix))
+        ax.text(1.1, y + 0.3, text, va="center", fontsize=10)
 
-if uploaded_file: img_array = load_image(uploaded_file) st.image(img_array, caption="Uploaded Image", use_container_width=True)
+    ax.set_xlim(0, 10)
+    ax.set_ylim(-len(colors), 1)
 
-img_2d = img_array.reshape((-1, 3))
-kmeans = KMeans(n_clusters=num_colors, n_init=10)
-kmeans.fit(img_2d)
-dominant_colors = np.round(kmeans.cluster_centers_).astype(int)
-
-mix_results = [get_mix_percentages(color, REFERENCE_COLORS) for color in dominant_colors]
-result_path = display_results(dominant_colors, mix_results)
-
-st.image(result_path, caption="Mixing Guide", use_container_width=True)
-with open(result_path, "rb") as f:
-    st.download_button("Download Result", f, file_name="Tut_Mix_Guide.png")
-
+    output_path = "/mount/src/tut/color_mix_result.png" if os.path.exists("/mount/src/tut") else "color_mix_result.png"
+    plt.savefig(output_path, bbox_inches="tight", format="png")
+    st.image(output_path, caption="Mix Guide", use_container_width=True)
+    with open(output_path, "rb") as f:
+        st.download_button("⬇️ Download Result Image", f, file_name="Tut_Mix_Guide.png", mime="image/png")
