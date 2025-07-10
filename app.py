@@ -19,7 +19,7 @@ def get_mix_percentages(target_rgb, reference_rgbs):
         ref_color = sRGBColor(*[c / 255 for c in ref_rgb])
         lab = convert_color(ref_color, LabColor)
         delta_e = delta_e_cie2000(target_lab, lab)
-        distances.append(delta_e.item())  # Fixed .asscalar()
+        distances.append(float(delta_e))  # Safely extract scalar
 
     total = sum(distances)
     if total == 0:
